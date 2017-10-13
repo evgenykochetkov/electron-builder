@@ -2,7 +2,7 @@ import BluebirdPromise from "bluebird-lst"
 import { debug } from "builder-util"
 import { CONCURRENCY } from "builder-util/out/fs"
 import { orNullIfFileNotExist } from "builder-util/out/promise"
-import { lstat, readdir, readFile, realpath, Stats } from "fs-extra-p"
+import { lstat, readFile, realpath, Stats } from "fs-extra-p"
 import { Lazy } from "lazy-val"
 import * as path from "path"
 
@@ -14,7 +14,7 @@ export interface Dependency {
   optional: boolean
 
   dependencies: Map<string, Dependency> | null
-  directDependencyNames: { [key: string]: any } | null
+  directDependencyNames: string[] | null
   optionalDependencies: { [key: string]: any } | null
 
   realName: string
@@ -45,11 +45,23 @@ export function createLazyProductionDeps(projectDir: string) {
   return new Lazy(() => getProductionDependencies(projectDir))
 }
 
+function uniqDeps(deps: Array<Dependency>) {
+  const occured = new Map();
+  return deps.filter((dep) => {
+    if (occured.has(dep.path)) {
+      return false;
+    } else {
+      occured.set(dep.path, true);
+      return true;
+    }
+  })
+}
+
 /** @internal */
 export async function getProductionDependencies(folder: string): Promise<Array<Dependency>> {
   const sorted: Array<Dependency> = []
   computeSortedPaths(await computeDependencies(folder), sorted, false)
-  return sorted
+  return uniqDeps(sorted);
 }
 
 async function computeDependencies(folder: string): Promise<Dependency> {
@@ -98,22 +110,23 @@ async function _readInstalled(dir: string, obj: Dependency, parent: any | null, 
   }
 
   if (obj.dependencies == null && obj.optionalDependencies == null) {
-    // package has only dev or peer dependencies - no need to check child node_module
+    // package has only dev or peer dependencies
     obj.dependencies = null
     return
   }
 
-  const childModules = await readScopedDir(path.join(dir, "node_modules"))
-  if (childModules == null) {
+  const dependencyNames = Object.keys(obj.dependencies || {}).concat(Object.keys(obj.optionalDependencies || {}));
+  const childModules: string[] = dependencyNames.filter(it => !knownAlwaysIgnoredDevDeps.has(it))
+  if (childModules.length === 0) {
     obj.dependencies = null
     return
   }
 
-  const deps = await BluebirdPromise.map(childModules, it => readChildPackage(it, dir, obj, depth, pathToMetadata), CONCURRENCY)
-  if (deps.length === 0) {
-    obj.dependencies = null
-    return
-  }
+  const deps = await BluebirdPromise.map(
+    childModules,
+    it => readChildPackage(it, dir, obj, depth, pathToMetadata),
+    CONCURRENCY
+  )
 
   const nameToMetadata = new Map<string, Dependency>()
   for (const dep of deps) {
@@ -124,10 +137,30 @@ async function _readInstalled(dir: string, obj: Dependency, parent: any | null, 
   obj.dependencies = nameToMetadata
 }
 
+function isRootDir (dir: string) {
+  const parsed = path.parse(dir)
+  return parsed.root === dir
+}
+
+async function findPackage(dir: string, packageName: string): Promise<{ rawDir: string, stat: Stats }> {
+  const rawDir = path.join(dir, "node_modules", packageName)
+
+  try {
+    const stat = await lstat(rawDir)
+    return { stat, rawDir }
+  } catch (e) {
+    if (isRootDir(dir)) {
+      throw new Error(`can't find package ${packageName}`);
+    }
+
+    return await findPackage(path.join(dir, '..'), packageName);
+  }
+}
+
 async function readChildPackage(name: string, parentDir: string, parent: any, parentDepth: number, pathToMetadata: Map<string, Dependency>): Promise<Dependency | null> {
-  const rawDir = path.join(parentDir, "node_modules", name)
+  const { rawDir, stat } = await findPackage(parentDir, name);
   let dir: string | null = rawDir
-  const stat = await lstat(dir)
+
   const isSymbolicLink = stat.isSymbolicLink()
   if (isSymbolicLink) {
     dir = await orNullIfFileNotExist(realpath(dir))
@@ -212,36 +245,4 @@ function findDep(obj: Dependency, name: string) {
     r = r.link == null ? r.parent : null
   }
   return found
-}
-
-async function readScopedDir(dir: string): Promise<Array<string> | null> {
-  let files: Array<string>
-  try {
-    files = (await readdir(dir)).filter(it => !it.startsWith(".") && !knownAlwaysIgnoredDevDeps.has(it))
-  }
-  catch (e) {
-    // error indicates that nothing is installed here
-    return null
-  }
-
-  files.sort()
-
-  const scopes = files.filter(it => it.startsWith("@") && it !== "@types")
-  if (scopes.length === 0) {
-    return files
-  }
-
-  const result = files.filter(it => !it.startsWith("@"))
-  const scopeFileList = await BluebirdPromise.map(scopes, it => readdir(path.join(dir, it)))
-  for (let i = 0; i < scopes.length; i++) {
-    const list = scopeFileList[i]
-    list.sort()
-    for (const file of list) {
-      if (!file.startsWith(".")) {
-        result.push(`${scopes[i]}/${file}`)
-      }
-    }
-  }
-
-  return result
 }

@@ -105,3 +105,16 @@ require('electron-compile').init(__dirname, require('path').resolve(__dirname, '
 export function ensureEndSlash(s: string) {
   return s === "" || s.endsWith(path.sep) ? s : (s + path.sep)
 }
+
+export function relativeUpwardsPathToNodeModulesPath (p: string) {
+  if (!p.startsWith('..')) return p
+
+  const base = (path.sep === '/')
+    ? p.replace(/\.\.\//g, '')
+    : p.replace(/\.\.\\/g, '')
+
+  return path.join(
+    base.startsWith('node_modules') ? '' : 'node_modules',
+    base
+  )
+}
