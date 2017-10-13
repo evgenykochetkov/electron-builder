@@ -7,7 +7,7 @@ import { AsarFilesystem, Node, readAsar } from "../asar"
 import { AsarOptions } from "../configuration"
 import { Packager } from "../packager"
 import { PlatformPackager } from "../platformPackager"
-import { NODE_MODULES_PATTERN, ResolvedFileSet } from "./AppFileCopierHelper"
+import { NODE_MODULES_PATTERN, ResolvedFileSet, relativeUpwardsPathToNodeModulesPath } from "./AppFileCopierHelper"
 import { getDestinationPath } from "./appFileCopier"
 
 const isBinaryFile: any = BluebirdPromise.promisify(require("isbinaryfile"))
@@ -100,7 +100,10 @@ export class AsarPackager {
     for (let i = 0, n = fileSet.files.length; i < n; i++) {
       const file = fileSet.files[i]
       const stat = metadata.get(file)
-      const pathInArchive = path.relative(rootForAppFilesWithoutAsar, getDestinationPath(file, fileSet))
+
+      const destPath = getDestinationPath(file, fileSet)
+      const pathInArchive = relativeUpwardsPathToNodeModulesPath(path.relative(rootForAppFilesWithoutAsar, destPath))
+
       if (stat != null && stat.isFile()) {
         let fileParent = path.dirname(pathInArchive)
         if (fileParent === ".") {
@@ -324,6 +327,7 @@ async function detectUnpackedDirs(fileSet: ResolvedFileSet, autoUnpackDirs: Set<
 
     const packageDir = file.substring(0, nextSlashIndex)
     const packageDirPathInArchive = path.relative(rootForAppFilesWithoutAsar, getDestinationPath(packageDir, fileSet))
+    // TODO: normalize path here too?
     const pathInArchive = path.relative(rootForAppFilesWithoutAsar, getDestinationPath(file, fileSet))
     if (autoUnpackDirs.has(packageDirPathInArchive)) {
       // if package dir is unpacked, any file also unpacked
