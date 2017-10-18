@@ -1,1 +1,0 @@
-Ignore `package.json` directory.

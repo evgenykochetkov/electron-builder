@@ -1,1 +1,0 @@
-Test that we don't take in account just directory `app` without `package.json`
