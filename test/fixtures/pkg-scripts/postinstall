@@ -1,3 +1,0 @@
-#!/bin/sh
-
-echo $PACKAGE_PATH > /tmp/postinstall.txt
