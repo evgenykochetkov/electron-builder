@@ -17,7 +17,7 @@ dist/
 
 .DS_Store
 
-/packages/*/out/
+#/packages/*/out/
 /out/
 # to not exclude .js.snap (jest snapshots)
 /test/out/**/*.js
